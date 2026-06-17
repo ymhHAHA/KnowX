@@ -36,7 +36,7 @@ KnowX 是一个面向研发人员的企业级知识库问答系统，目标场�
 
 <div align="center">
 
-▶️ [点击观看产品演示视频](https://media.githubusercontent.com/media/ymhHAHA/KnowX/main/showcase/demo.mp4)
+![演示视频](showcase/demo.gif)
 
 </div>
 
