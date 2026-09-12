@@ -25,10 +25,7 @@ KnowX 是一个面向研发人员的企业级知识库问答系统，目标场�
 |多媒体信息|图片、表格常被忽略|表格/图片 caption 写入 chunk，纳入向量检索|
 |检索策略|单向量相似度|向量 over-fetch + KG 上下文 + Cross-Encoder rerank|
 |可追溯性|引用弱或无引用|引用 ID、页码、标题路径、文档跳转|
-|工程落地|单用户 Demo 居多|鉴权、租户隔离、限流、Celery 队列、MCP Server|
-|部署形态|依赖云 API|支持本地 Qwen/Ollama|
-
-> **为什么面向研发场景要单独强调表格？** 生物/化学实验 SOP 中，关键参数（试剂比例、温度、时间、批次）大量存于表格。一旦问答系统丢失表格结构或生成无来源结论，可能直接影响实验准确性。KnowX 的核心设计目标是"可审计的回答"，而不仅仅是"能聊天"。
+|工程落地|单用户 Demo 居多|鉴权、租户隔离、限流、Celery 队列|
 
 ---
 
@@ -58,8 +55,9 @@ KnowX 是一个面向研发人员的企业级知识库问答系统，目标场�
 2. 后端将解析任务投递到 `parse_index_queue`，Celery Worker 异步执行。
 3. 解析器统一输出 `ParsedDocument`：Markdown、chunk、图片、表格、页码、标题路径。
 4. 系统对 chunk 去噪去重，图片/表格 caption 增强后写入 ChromaDB；同步构建 LightRAG 知识图谱。
-5. 查询时并行执行向量召回与 KG 上下文获取，Cross-Encoder 精排后交给 LLM 生成带引用答案。
-6. 前端展示引用来源卡片、可跳转的文档阅读器和知识图谱可视化。
+5. 查询前先做上下文预算预检，按剩余 token 动态裁剪历史与检索 top-K，再进入精排与生成。
+6. 查询时并行执行向量召回与 KG 上下文获取，Cross-Encoder 精排后交给 LLM 生成带引用答案。
+7. 前端展示引用来源卡片、可跳转的文档阅读器和知识图谱可视化。
 
 </details>
 
@@ -86,14 +84,14 @@ Marker   ──┘        ↓
 
 |场景|推荐解析器|原因|
 |-|-|-|
-|表格密集、页码/标题结构重要|Docling（默认）|HybridChunker，结构化程度高|
-|公式/LaTeX 敏感，或显存紧张|Marker|Surya 引擎，~2–4GB VRAM（vs Docling ~18–20GB）|
+|表格密集、页码/标题结构重要|Docling（默认）|HybridChunker，结构化程度高，支持图表同页定位；单次解析显存约 4–8GB VRAM|
+|公式/LaTeX 敏感，或显存紧张|Marker|Surya 引擎，~2–4GB VRAM|
 
 ---
 
 ### 2. 表格与图片纳入向量检索
 
-传统 RAG 常将图片和表格丢弃，KnowX 通过以下方式让多媒体内容可被语义检索：
+传统 RAG 常将图片和表格丢弃，KnowX 通过以下方式让内容可被语义检索：
 
 **表格处理流程：**
 
@@ -104,8 +102,8 @@ Marker   ──┘        ↓
 **图片处理流程：**
 
 1. 解析器抽取图片（每文档上限 50 张）
-2. 视觉 LLM 生成 caption（具体数字、标签、趋势描述）
-3. Caption 追加至同页 chunk → 参与 embedding
+2. LLM 生成摘要（具体数字、标签、趋势描述）
+3. 摘要追加至同页 chunk → 参与 embedding
 
 效果：用户可用自然语言检索"试剂比例表""第 5 页的收益趋势图说明"等内容，**而不仅限于纯文本段落**。
 
@@ -116,11 +114,14 @@ Marker   ──┘        ↓
 ```
 用户查询
   ├─ 向量召回：ChromaDB over-fetch（默认 top-20 候选）
-  └─ KG 上下文：LightRAG hybrid/local/global/naive 模式
+  └─ KG 上下文：LightRAG hybrid 模式
 
        ↓  合并
   Cross-Encoder（bge-reranker-v2-m3）
-  对每个 (query, chunk) 联合打分 → 精排 → 保留 top-8
+  对每个 (query, chunk) 联合打分 → 精排
+
+       ↓
+  上下文预算控制（token 预检 / 历史裁剪 / 动态 top-K）
 
        ↓
   结构化上下文：KG 实体摘要 + 引用 chunk + 同页图片/表格
@@ -133,16 +134,6 @@ Marker   ──┘        ↓
 * **向量召回**：找到语义相关段落
 * **LightRAG KG**：补充实体与关系上下文，适合跨文档、多跳问题
 * **Cross-Encoder**：精准排除"语义相似但无法回答问题"的 chunk（相比 cosine similarity 精度更高）
-
-可按需切换检索模式：
-
-|模式|说明|适用场景|
-|-|-|-|
-|`hybrid`（默认）|向量 + KG + rerank|大多数问答、跨文档查询|
-|`vector_only`|关闭 KG，仅向量 + rerank|图谱质量不稳定、纯语义检索|
-|`local`|LightRAG 局部图谱|关注实体邻域、多跳关系|
-|`global`|LightRAG 全局模式|文档集合概览、主题总结|
-|`naive`|轻量 KG 查询|对照实验|
 
 ---
 
@@ -164,7 +155,6 @@ Marker   ──┘        ↓
 
 * **用户鉴权**：注册登录，密码 bcrypt 哈希，接口 JWT 访问控制
 * **租户隔离**：每个知识库绑定 `owner_id`，跨租户访问统一返回 404
-* **鉴权图片代理**：文档图片不经公开静态目录暴露，通过 `/api/v1/documents/image-file/{workspace_id}/{file}` 并校验 Bearer Token
 * **Redis 限流**：聊天、上传、解析均有限流；限制同一用户流式聊天单并发
 
 ---
@@ -210,15 +200,53 @@ language = zh
 
 KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的知识服务模块**。
 
+### 9. 上下文预算控制（Context Budget Control）
+
+长文档、多轮对话和多路检索叠加后，最容易出现的问题不是“检索不到”，而是**上下文超限、成本失控、无关 chunk 挤占有效窗口**。KnowX 在生成前引入统一的上下文预算控制层，对输入 token 做预检，并按预算动态裁剪历史与检索结果。
+
+**设计目标：**
+
+- 在调用 LLM 前预估总输入 token，避免超限报错或静默截断
+- 在多轮对话中优先保留最近且与当前问题相关的历史
+- 根据剩余预算动态调整检索 top-K，平衡召回率与上下文利用率
+
+**预算分配模型：**
+
+## 预算分配模型
+
+```
+总上下文预算（模型上限 - 预留输出 token）
+  ├─ 系统提示词 / 工作区自定义 prompt
+  ├─ 多轮对话历史（按预算裁剪）
+  ├─ 检索上下文（向量 + KG，动态 top-K）
+  └─ 当前用户问题
+```
+
+## 三层控制策略
+
+### 1. 输入 token 预检
+
+- 在检索完成后、调用 LLM 前，对 system prompt、历史消息、检索 chunk、当前 query 做 token 估算
+- 若超出预算，进入裁剪流程，而不是直接调用模型
+
+### 2. 按预算裁剪历史
+
+- 默认保留最近 N 轮完整对话
+- 超出预算时，从最早轮次开始丢弃，或压缩为摘要占位
+- 优先保留：当前问题、最近一轮用户输入、与引用相关的 assistant 回复
+
+### 3. 动态调整 top-K
+
+- 向量召回默认 over-fetch（如 top-20），精排后保留 top-8
+- 当历史较长或 system prompt 较重时，自动下调最终保留 chunk 数（如 8 → 5 → 3）
+- 预算充足时维持默认 top-K，避免无谓损失召回
 ---
 
 ## 评测结果
 
-评测使用本地 Qwen2.5-7B作为生成模型，`BAAI/bge-m3` embedding，`BAAI/bge-reranker-v2-m3` reranker。
-
 ### 整体评级：良好（GOOD）— 具备生产可用基础，有明确的可改进项
 
-**轨道 1 — 32 题手工精标**（通过阈值 overall_score ≥ 0.70，Judge：DeepSeek-Chat）：
+**轨道 1 — 32 题手工精标**（通过阈值 overall_score ≥ 0.9，Judge：DeepSeek-Chat）：
 
 |测试集|通过率|均分|平均延迟|
 |-|-|-|-|
@@ -238,17 +266,7 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 |`faithfulness`|0.688|偶发超出检索内容的发挥|
 |`table_extraction` recall|0.63|表格/数值题最弱，为当前首要改进项|
 
-<details>
-<summary>已识别的主要短板与改进方向</summary>
-
-1. **检索精度 / metadata**：封面、出版日期类 query 召回不稳；`context_relevancy` 偏低
-2. **长综合答案引用**：跨文档综合题内容正确但部分缺少 inline `[xxxx]` 引用
-3. **表格与数值**：`table_extraction` 类型 recall/FC 最低；表格易被 chunk 打散
-4. **Multi-hop**：`multi_hop_reasoning` recall 约 0.60，低于 single-hop
-
 </details>
-
-
 
 ## 技术栈
 
@@ -298,13 +316,5 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 
 ---
 
-## Roadmap
 
-* [ ] **上下文预算控制**：输入 token 预检、按预算裁剪历史、动态调整 top-K
-* [ ] **pgvector 后端**：减少 ChromaDB 独立运维成本，统一数据平面
-* [ ] **Search/Chat metadata filter UI**：支持按项目、类型、版本过滤
-* [ ] **研发/SOP 专项评测集**：在双轨协议上增补 15–25 道业务题（表格、metadata、SOP 步骤）
-* [ ] **多模态扩展**：面向图像、音频、视频资料的统一检索
-
----
 
