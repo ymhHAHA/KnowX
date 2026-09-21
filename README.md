@@ -188,19 +188,7 @@ language = zh
 
 ---
 
-### 8. MCP Server：作为 IDE / Agent 的知识服务
-
-项目包含独立 MCP Server（Streamable HTTP 协议），可直接接入 Cursor、Claude Desktop 等工具，暴露以下能力：
-
-|Tool|说明|
-|-|-|
-|`get_workspace_list`|列出所有知识库|
-|`get_document_by_id`|获取指定文档信息|
-|`query`|对索引文档进行语义检索|
-
-KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的知识服务模块**。
-
-### 9. 上下文预算控制（Context Budget Control）
+### 8. 上下文预算控制（Context Budget Control）
 
 长文档、多轮对话和多路检索叠加后，最容易出现的问题不是“检索不到”，而是**上下文超限、成本失控、无关 chunk 挤占有效窗口**。KnowX 在生成前引入统一的上下文预算控制层，对输入 token 做预检，并按预算动态裁剪历史与检索结果。
 
@@ -244,16 +232,7 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 
 ## 评测结果
 
-### 整体评级：良好（GOOD）— 具备生产可用基础，有明确的可改进项
-
-**轨道 1 — 32 题手工精标**（通过阈值 overall_score ≥ 0.9，Judge：DeepSeek-Chat）：
-
-|测试集|通过率|均分|平均延迟|
-|-|-|-|-|
-|英文|12/12|0.858|4.3s|
-|中文|12/12|0.876|2.2s|
-|中英混合 / 跨文档|7/8|0.821|3.5s|
-|**合计**|**31/32**|**0.852**|3.4s|
+### 整体评级：良好（GOOD）— 有明确的可改进项
 
 拒答、引用格式、幻觉防范、语言匹配等机制性指标多为满分或接近满分。
 
@@ -261,9 +240,8 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 
 |指标|均值|说明|
 |-|-|-|
-|`context_recall`|0.697|检索召回尚可，长尾在表格与 metadata|
-|`factual_correctness` (F1)|0.791|含 RAGAS judge 假阴性，估计真实值约 0.6–0.7|
-|`faithfulness`|0.688|偶发超出检索内容的发挥|
+|`context_recall`|0.897|检索召回尚可，长尾在表格与 metadata|
+|`faithfulness`|0.818|偶发超出检索内容的发挥|
 |`table_extraction` recall|0.63|表格/数值题最弱，为当前首要改进项|
 
 </details>
@@ -287,20 +265,6 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 
 </details>
 
-<details>
-<summary><b>Frontend</b></summary>
-
-|技术|项目中的作用|
-|-|-|
-|React 19 + TypeScript|三栏工作台 UI：文档、聊天、阅读/图谱|
-|Vite 7|前端开发与构建|
-|Tailwind CSS 4|主题、布局、响应式样式|
-|TanStack Query|API 请求、缓存、mutation 状态|
-|Zustand|登录状态、workspace 布局、检索模式、引用跳转状态|
-|react-markdown + KaTeX|Markdown、代码块、公式渲染|
-|Framer Motion|列表、空状态、交互动效|
-
-</details>
 
 <details>
 <summary><b>Infrastructure</b></summary>
@@ -310,7 +274,7 @@ KnowX 因此不仅是一个 Web 应用，**也可以作为研发工作流中的�
 |PostgreSQL|业务元数据与聊天历史|
 |Redis|Celery Broker、限流、缓存|
 |ChromaDB|向量索引|
-|Docker Compose|全栈部署（PostgreSQL + ChromaDB + Backend + Frontend + MCP Server）|
+|Docker Compose|全栈部署（PostgreSQL + ChromaDB + Backend + Frontend）|
 
 </details>
 
